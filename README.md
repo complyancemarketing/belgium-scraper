@@ -44,7 +44,22 @@ npm install
 pip3 install -r requirements.txt
 ```
 
-3. Start both servers (backend proxy + frontend):
+3. **Set up Mistral AI API key** (required for LLM verification):
+   - Get your API key from [Mistral AI Console](https://console.mistral.ai/)
+   - Copy `.env.example` to `.env`:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `.env` and add your Mistral API key:
+     ```
+     MISTRAL_API_KEY=your_actual_api_key_here
+     ```
+   - Or set it as an environment variable:
+     ```bash
+     export MISTRAL_API_KEY=your_actual_api_key_here
+     ```
+
+4. Start both servers (backend proxy + frontend):
 ```bash
 npm run dev:all
 ```
@@ -59,9 +74,12 @@ npm run server
 npm run dev
 ```
 
-4. Open your browser to `http://localhost:3000`
+5. Open your browser to `http://localhost:3000`
 
-**Important**: The backend proxy server (Python Flask on port 3002) is required to bypass CORS restrictions. Without it, scraping will fail due to browser security policies.
+**Important**: 
+- The backend proxy server (Python Flask on port 3002) is required to bypass CORS restrictions. 
+- Mistral AI API key is required for LLM-based content verification.
+- Without these, scraping will fail or return no results.
 
 ## Usage
 
@@ -98,6 +116,14 @@ The application includes a **Python Flask backend proxy server** that handles al
 
 **Python Dependencies:**
 - Flask - Web framework
+- Flask-CORS - CORS handling
+- Requests - HTTP library for making requests
+
+**LLM Verification:**
+- Uses **Mistral AI API** (mistral-tiny model) for intelligent content verification
+- Two-step verification: keyword matching + LLM validation
+- Ensures high accuracy in detecting e-invoicing related content
+- Falls back to enhanced keyword analysis if LLM API is unavailable
 - flask-cors - CORS handling
 - requests - HTTP client for scraping
 

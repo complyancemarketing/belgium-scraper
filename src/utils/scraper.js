@@ -211,7 +211,7 @@ let lastLLMCall = 0;
 const LLM_DELAY = 500; // 500ms between LLM calls to avoid rate limits
 
 /**
- * Verify content is about e-invoicing using LLM via backend proxy
+ * Verify content is about e-invoicing using Mistral AI via backend proxy
  * This is a second verification step to filter out false positives
  */
 async function verifyWithLLM(title, content, url) {

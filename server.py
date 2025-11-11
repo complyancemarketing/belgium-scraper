@@ -2,12 +2,21 @@
 """
 Backend Proxy Server for Web Scraping
 Handles CORS issues by proxying requests server-side
+Uses Mistral AI for LLM-based content verification
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 from urllib.parse import urlparse
+import os
+
+# Try to load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("python-dotenv not installed. Using system environment variables only.")
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -43,26 +52,42 @@ Content: {content_to_verify}
 
 Answer ONLY "YES" or "NO"."""
         
-        # Try Hugging Face Inference API
+        # Try Mistral AI API
         try:
-            hf_response = requests.post(
-                'https://api-inference.huggingface.co/models/google/flan-t5-base',
-                headers={'Content-Type': 'application/json'},
-                json={
-                    'inputs': prompt,
-                    'parameters': {'max_new_tokens': 5, 'temperature': 0.1}
+            # Get Mistral API key from environment variable
+            # Get it from: https://console.mistral.ai/
+            mistral_api_key = os.environ.get('MISTRAL_API_KEY', '')
+            
+            if not mistral_api_key or mistral_api_key == 'YOUR_MISTRAL_API_KEY_HERE':
+                print("Warning: MISTRAL_API_KEY not set. Using fallback verification.")
+                raise Exception("Mistral API key not configured")
+            
+            mistral_response = requests.post(
+                'https://api.mistral.ai/v1/chat/completions',
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {mistral_api_key}'
                 },
-                timeout=10
+                json={
+                    'model': 'mistral-tiny',  # Fast and cost-effective model
+                    'messages': [
+                        {
+                            'role': 'user',
+                            'content': prompt
+                        }
+                    ],
+                    'temperature': 0.1,
+                    'max_tokens': 10
+                },
+                timeout=15
             )
             
-            if hf_response.ok:
-                hf_data = hf_response.json()
+            if mistral_response.ok:
+                mistral_data = mistral_response.json()
                 response_text = ''
                 
-                if isinstance(hf_data, list) and len(hf_data) > 0 and 'generated_text' in hf_data[0]:
-                    response_text = hf_data[0]['generated_text']
-                elif 'generated_text' in hf_data:
-                    response_text = hf_data['generated_text']
+                if 'choices' in mistral_data and len(mistral_data['choices']) > 0:
+                    response_text = mistral_data['choices'][0]['message']['content']
                 
                 is_e_invoicing = 'YES' in response_text.upper() and 'NO' not in response_text.upper()
                 
@@ -70,10 +95,12 @@ Answer ONLY "YES" or "NO"."""
                     'success': True,
                     'verified': is_e_invoicing,
                     'response': response_text.strip(),
-                    'method': 'huggingface'
+                    'method': 'mistral_ai'
                 })
+            else:
+                print(f"Mistral AI API error: {mistral_response.status_code} - {mistral_response.text}")
         except Exception as e:
-            print(f"Hugging Face API error: {str(e)}")
+            print(f"Mistral AI API error: {str(e)}")
         
         # Fallback: Use enhanced keyword analysis
         combined_text = f"{title} {content}".lower()
