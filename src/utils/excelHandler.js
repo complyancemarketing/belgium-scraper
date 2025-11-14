@@ -1,114 +1,42 @@
 /**
  * Excel File Handler using SheetJS (xlsx)
  * Manages reading, writing, and updating Excel files for e-invoicing data
+ * Now with Supabase cloud storage support!
  */
 
 import * as XLSX from 'xlsx';
+import * as SupabaseStorage from './supabaseStorage.js';
 
 const STORAGE_KEY = 'bosa_einvoicing_data';
 const FILE_NAME = 'bosa_einvoicing_data.xlsx';
 
 /**
- * Get data from window.storage (fallback to in-memory if not available)
+ * Load existing data from Supabase (or localStorage fallback)
  */
-function getStorage() {
-  if (typeof window !== 'undefined' && window.storage) {
-    return window.storage;
-  }
-  // Fallback to localStorage for development
-  return {
-    getItem: (key) => localStorage.getItem(key),
-    setItem: (key, value) => localStorage.setItem(key, value),
-    removeItem: (key) => localStorage.removeItem(key)
-  };
+export async function loadExistingData() {
+  return await SupabaseStorage.loadAllPosts();
 }
 
 /**
- * Load existing data from storage
+ * Save data to Supabase (or localStorage fallback)
  */
-export function loadExistingData() {
-  try {
-    const storage = getStorage();
-    const dataStr = storage.getItem(STORAGE_KEY);
-    
-    if (!dataStr) {
-      return [];
-    }
-
-    // Parse Excel data from base64 or JSON
-    if (dataStr.startsWith('data:')) {
-      // Base64 encoded Excel file
-      const base64Data = dataStr.split(',')[1];
-      const binaryString = atob(base64Data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const workbook = XLSX.read(bytes, { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      return XLSX.utils.sheet_to_json(worksheet);
-    } else {
-      // JSON format
-      return JSON.parse(dataStr);
-    }
-  } catch (error) {
-    console.error('Error loading existing data:', error);
-    return [];
-  }
-}
-
-/**
- * Save data to storage
- */
-export function saveData(data) {
-  try {
-    const storage = getStorage();
-    
-    // Create workbook
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'E-Invoicing Data');
-
-    // Convert to base64
-    const excelBuffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
-    // Convert Uint8Array to string properly
-    let binaryString = '';
-    const bytes = new Uint8Array(excelBuffer);
-    for (let i = 0; i < bytes.length; i++) {
-      binaryString += String.fromCharCode(bytes[i]);
-    }
-    const base64String = btoa(binaryString);
-    const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64String}`;
-
-    // Save to storage
-    storage.setItem(STORAGE_KEY, dataUrl);
-    
-    // Also save as JSON for easier access
-    storage.setItem(STORAGE_KEY + '_json', JSON.stringify(data));
-    
-    return true;
-  } catch (error) {
-    console.error('Error saving data:', error);
-    throw error;
-  }
+export async function saveData(data) {
+  return await SupabaseStorage.savePosts(data);
 }
 
 /**
  * Download Excel file
  */
-export function downloadExcelFile(data) {
-  try {
+export async function downloadExcelFile(data) {
+  if (data && data.length > 0) {
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(data);
     XLSX.utils.book_append_sheet(workbook, worksheet, 'E-Invoicing Data');
-
-    // Generate file and download
     XLSX.writeFile(workbook, FILE_NAME);
     return true;
-  } catch (error) {
-    console.error('Error downloading Excel file:', error);
-    return false;
+  } else {
+    // Load from storage if no data provided
+    return await SupabaseStorage.downloadExcelFile();
   }
 }
 
@@ -116,93 +44,23 @@ export function downloadExcelFile(data) {
  * Add new posts to existing data
  * Returns: { newPosts, updatedData, stats }
  */
-export function addNewPosts(newPosts) {
-  const existingData = loadExistingData();
-  const existingUrls = new Set(existingData.map(item => item['Post URL'] || item.url));
-  
-  const now = new Date().toISOString();
-  const newEntries = [];
-  let newCount = 0;
-
-  for (const post of newPosts) {
-    const url = post.url;
-    
-    if (!existingUrls.has(url)) {
-      // New post
-      const entry = {
-        'Publication Date': post.publicationDate ? 
-          new Date(post.publicationDate).toLocaleDateString() : 
-          new Date().toLocaleDateString(),
-        'Post URL': url,
-        'Post Title': post.title,
-        'Content Summary': post.content || '',
-        'Scrape Timestamp': now,
-        'Status': 'New'
-      };
-      
-      newEntries.push(entry);
-      newCount++;
-    } else {
-      // Update existing entry status if needed
-      const existingIndex = existingData.findIndex(item => 
-        (item['Post URL'] || item.url) === url
-      );
-      if (existingIndex >= 0 && existingData[existingIndex].Status !== 'New') {
-        existingData[existingIndex].Status = 'Existing';
-      }
-    }
-  }
-
-  // Combine existing and new data
-  const updatedData = [...existingData, ...newEntries];
-  
-  // Update status of old "New" entries to "Existing"
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  updatedData.forEach(entry => {
-    if (entry.Status === 'New') {
-      const scrapeDate = new Date(entry['Scrape Timestamp']);
-      if (scrapeDate < oneDayAgo) {
-        entry.Status = 'Existing';
-      }
-    }
-  });
-
-  // Save updated data
-  saveData(updatedData);
-
-  return {
-    newPosts: newEntries,
-    updatedData: updatedData,
-    stats: {
-      total: updatedData.length,
-      new: newCount,
-      existing: existingData.length
-    }
-  };
+export async function addNewPosts(newPosts) {
+  return await SupabaseStorage.addNewPosts(newPosts);
 }
 
 /**
  * Get visited URLs from stored data
+ * Returns a Set (HashMap) of all post URLs for O(1) duplicate checking
  */
-export function getVisitedUrls() {
-  const data = loadExistingData();
-  const urlSet = new Set();
-  
-  data.forEach(item => {
-    const url = item['Post URL'] || item.url;
-    if (url) {
-      urlSet.add(url);
-    }
-  });
-  
-  return urlSet;
+export async function getVisitedUrls() {
+  return await SupabaseStorage.getVisitedUrls();
 }
 
 /**
  * Get last scrape date
  */
-export function getLastScrapeDate() {
-  const data = loadExistingData();
+export async function getLastScrapeDate() {
+  const data = await loadExistingData();
   
   if (data.length === 0) {
     return null;
@@ -219,8 +77,8 @@ export function getLastScrapeDate() {
 /**
  * Get analytics data
  */
-export function getAnalyticsData() {
-  const data = loadExistingData();
+export async function getAnalyticsData() {
+  const data = await loadExistingData();
   
   const stats = {
     total: data.length,
@@ -282,21 +140,13 @@ export function getAnalyticsData() {
 /**
  * Reset all data - clears all stored posts and metrics
  */
-export function resetAllData() {
-  try {
-    const storage = getStorage();
-    
-    // Clear all stored data
-    storage.removeItem(STORAGE_KEY);
-    storage.removeItem(STORAGE_KEY + '_json');
-    
-    // Save empty array to ensure clean state
-    saveData([]);
-    
-    return true;
-  } catch (error) {
-    console.error('Error resetting data:', error);
-    throw error;
-  }
+export async function resetAllData() {
+  return await SupabaseStorage.resetAllData();
 }
 
+/**
+ * Import Excel file from user's computer
+ */
+export async function importExcelFile(file) {
+  return await SupabaseStorage.importExcelFile(file);
+}

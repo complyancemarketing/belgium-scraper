@@ -902,11 +902,28 @@ function findEInvoicingLinks(html, baseUrl) {
 
 /**
  * Extract all internal links from a page
+ * Excludes files (PDFs, videos, documents, archives, etc.) - only scrapes HTML pages
  */
 function extractAllLinks(html, baseUrl) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   const links = new Set();
+  
+  // File extensions to exclude (not HTML pages)
+  const excludedExtensions = [
+    // Documents
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf', '.odt', '.ods', '.odp',
+    // Archives
+    '.zip', '.rar', '.tar', '.gz', '.7z', '.bz2',
+    // Images
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico',
+    // Videos
+    '.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm', '.m4v',
+    // Audio
+    '.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac',
+    // Other
+    '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.xml', '.json', '.csv'
+  ];
   
   const allLinks = doc.querySelectorAll('a[href]');
   
@@ -917,16 +934,19 @@ function extractAllLinks(html, baseUrl) {
     try {
       const fullUrl = href.startsWith('http') ? href : new URL(href, baseUrl).href;
       
-      // Only include BOSA Belgium internal links
+      // Check if URL ends with any excluded file extension
+      const urlLower = fullUrl.toLowerCase();
+      const hasExcludedExtension = excludedExtensions.some(ext => 
+        urlLower.endsWith(ext) || urlLower.includes(ext + '?')
+      );
+      
+      // Only include BOSA Belgium internal HTML pages (exclude files)
       if (fullUrl.includes('bosa.belgium.be') && 
           !fullUrl.includes('mailto:') && 
           !fullUrl.includes('tel:') &&
           !fullUrl.includes('#') &&
           !fullUrl.includes('javascript:') &&
-          !fullUrl.endsWith('.pdf') &&
-          !fullUrl.endsWith('.doc') &&
-          !fullUrl.endsWith('.docx') &&
-          !fullUrl.endsWith('.zip')) {
+          !hasExcludedExtension) {
         // Remove query parameters and fragments for deduplication
         const urlObj = new URL(fullUrl);
         urlObj.search = '';
@@ -944,17 +964,18 @@ function extractAllLinks(html, baseUrl) {
 
 /**
  * Crawl website recursively
+ * Crawls entire website without page limit
  */
-async function crawlWebsite(startUrl, maxPages = 100, maxDepth = 5) {
+async function crawlWebsite(startUrl, maxDepth = 5) {
   const visited = new Set();
   const toVisit = [{ url: startUrl, depth: 0 }];
   const allLinks = new Set([startUrl]);
   let pagesScraped = 0;
   
   console.log(`Starting website crawl from ${startUrl}...`);
-  console.log(`Max pages: ${maxPages}, Max depth: ${maxDepth}`);
+  console.log(`Max depth: ${maxDepth} (no page limit - will crawl entire site)`);
   
-  while (toVisit.length > 0 && pagesScraped < maxPages) {
+  while (toVisit.length > 0) {
     const { url, depth } = toVisit.shift();
     
     // Skip if already visited or too deep
@@ -964,7 +985,7 @@ async function crawlWebsite(startUrl, maxPages = 100, maxDepth = 5) {
     pagesScraped++;
     
     try {
-      console.log(`[${pagesScraped}/${maxPages}] Crawling (depth ${depth}): ${url}`);
+      console.log(`[${pagesScraped}] Crawling (depth ${depth}): ${url}`);
       
       const html = await fetchPageViaProxy(url);
       if (html === null) {
@@ -997,61 +1018,140 @@ async function crawlWebsite(startUrl, maxPages = 100, maxDepth = 5) {
 }
 
 /**
- * Main scraping function - crawls website and extracts e-invoicing content
- * Simple version: scrapes up to 100 pages without date filtering
+ * Main scraping function - crawls entire website and extracts e-invoicing content
+ * Crawls all pages on the website (no page limit), skips already processed URLs
  */
-export async function scrapeBOSAWebsite() {
+export async function scrapeBOSAWebsite(isIncrementalMode = false) {
   const baseUrl = 'https://bosa.belgium.be/en';
-  const maxPages = 100;
   const allPosts = [];
   
-  console.log('Starting website scrape...');
-  console.log(`Will scrape up to ${maxPages} pages`);
+  if (isIncrementalMode) {
+    console.log('🔄 Starting SMART incremental scrape (auto-refresh mode)...');
+    console.log('✓ Using intelligent page cache - only checks NEW/UPDATED pages');
+  } else {
+    console.log('🚀 Starting intelligent website scrape...');
+    console.log('✓ Using page cache to skip unchanged pages');
+  }
   
-  // Crawl website - limit to 100 pages
-  const allPages = await crawlWebsite(baseUrl, maxPages, 5, new Set());
-  console.log(`Found ${allPages.length} pages to analyze for e-invoicing content`);
+  // Import modules
+  const excelHandler = await import('./excelHandler.js');
+  const pageCache = await import('./pageCache.js');
+  
+  const getVisitedUrls = excelHandler.getVisitedUrls;
+  
+  // Load page cache (previously scraped pages)
+  console.log('📦 Loading page cache...');
+  const cacheMap = await pageCache.loadPageCache();
+  const cacheStats = pageCache.getCacheStats(cacheMap);
+  console.log(`✓ Page cache loaded: ${cacheStats.totalPages} pages (${cacheStats.pagesWithEInvoicing} with e-invoicing content)`);
+  
+  // Get URLs we've already scraped (HashMap/Set for O(1) lookup)
+  const visitedUrls = await getVisitedUrls();
+  console.log(`✓ Already have ${visitedUrls.size} post URLs in database - will skip duplicate posts`);
+  
+  // Crawl website - limit pages in incremental mode
+  const maxDepth = isIncrementalMode ? 2 : 5; // Reduce depth for incremental
+  console.log(`🕷️ Crawling website (max depth: ${maxDepth})...`);
+  const allPages = await crawlWebsite(baseUrl, maxDepth);
+  console.log(`✓ Found ${allPages.length} pages on website`);
+  
+  // Determine which pages need scraping using intelligent cache
+  const rescrapeInfo = pageCache.getPagesToRescrape(
+    cacheMap, 
+    allPages, 
+    isIncrementalMode ? 7 : 30  // 7 days for incremental, 30 days for full
+  );
+  
+  console.log(`\n📊 Intelligent Scraping Analysis:`);
+  console.log(`  Total pages discovered: ${rescrapeInfo.totalPages}`);
+  console.log(`  ✅ Cached (skip): ${rescrapeInfo.cachedPages.length} pages`);
+  console.log(`  🔍 Need to check: ${rescrapeInfo.newPages.length} pages`);
+  console.log(`  ⚡ Cache hit rate: ${rescrapeInfo.cacheHitRate}`);
+  console.log(`  💾 Time saved: ~${Math.round(rescrapeInfo.cachedPages.length * 0.3 / 60)} minutes!\n`);
+  
+  // In incremental mode, limit pages further
+  const pagesToCheck = isIncrementalMode 
+    ? rescrapeInfo.newPages.slice(0, 20)  // Only first 20 new/updated pages
+    : rescrapeInfo.newPages;               // All new/updated pages
+  
+  console.log(`🔍 Analyzing ${pagesToCheck.length} pages for e-invoicing content...\n`);
   
   // Analyze each page for e-invoicing content
   let analyzed = 0;
+  const seenInThisScrape = new Set(); // Track duplicates within this scrape session
   
-  for (const url of allPages) {
+  for (const url of pagesToCheck) {
     analyzed++;
     
     try {
-      console.log(`[${analyzed}/${allPages.length}] Analyzing: ${url}`);
+      console.log(`[${analyzed}/${pagesToCheck.length}] Analyzing: ${url}`);
+      
+      // Fetch page content
+      const html = await fetchPageViaProxy(url);
+      if (!html) {
+        console.log(`  ⚠️ Failed to fetch page`);
+        continue;
+      }
+      
       const posts = await scrapePage(url);
       
-      allPosts.push(...posts);
+      // Update page cache with results
+      pageCache.updateCacheEntry(cacheMap, url, html, {
+        title: posts.length > 0 ? posts[0].title : '',
+        hasEInvoicingContent: posts.length > 0,
+        postsCount: posts.length,
+        httpStatus: 200
+      });
       
-      if (posts.length > 0) {
-        console.log(`  ✓ Found ${posts.length} e-invoicing posts on this page`);
+      // Filter out posts we've already seen (either in DB or in this scrape)
+      const newPosts = posts.filter(post => {
+        if (visitedUrls.has(post.url) || seenInThisScrape.has(post.url)) {
+          console.log(`  ⊘ Skipping duplicate post: ${post.title.substring(0, 50)}...`);
+          return false;
+        }
+        seenInThisScrape.add(post.url);
+        return true;
+      });
+      
+      allPosts.push(...newPosts);
+      
+      if (newPosts.length > 0) {
+        console.log(`  ✓ Found ${newPosts.length} NEW e-invoicing posts on this page`);
+      } else if (posts.length > 0) {
+        console.log(`  ℹ️ Found ${posts.length} e-invoicing posts (all already in database)`);
+      } else {
+        console.log(`  − No e-invoicing content on this page`);
       }
       
       // Delay for rate limiting
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (error) {
-      console.log(`  Error analyzing ${url}:`, error.message);
+      console.log(`  ❌ Error analyzing ${url}:`, error.message);
       continue;
     }
   }
 
-  // Remove duplicates based on URL
-  const uniquePosts = [];
-  const seenUrls = new Set();
-  
-  for (const post of allPosts) {
-    if (!seenUrls.has(post.url)) {
-      seenUrls.add(post.url);
-      uniquePosts.push(post);
-    }
-  }
+  // Save updated page cache
+  console.log(`\n💾 Saving page cache...`);
+  await pageCache.savePageCache(cacheMap);
+  const finalStats = pageCache.getCacheStats(cacheMap);
+  console.log(`✅ Cache updated: ${finalStats.totalPages} total pages, ${finalStats.pagesWithEInvoicing} with e-invoicing content`);
 
   console.log(`\n=== Scraping Complete ===`);
-  console.log(`Pages crawled: ${allPages.length}`);
-  console.log(`Total posts found: ${allPosts.length}`);
-  console.log(`Unique e-invoicing posts: ${uniquePosts.length}`);
+  if (isIncrementalMode) {
+    console.log(`Mode: Smart Incremental (auto-refresh)`);
+    console.log(`Pages cached/skipped: ${rescrapeInfo.cachedPages.length}`);
+    console.log(`Pages checked: ${pagesToCheck.length} (new/updated only)`);
+  } else {
+    console.log(`Mode: Intelligent Full Crawl`);
+    console.log(`Total pages discovered: ${allPages.length}`);
+    console.log(`Pages cached/skipped: ${rescrapeInfo.cachedPages.length}`);
+    console.log(`Pages analyzed: ${analyzed}`);
+  }
+  console.log(`Cache hit rate: ${rescrapeInfo.cacheHitRate}`);
+  console.log(`Unique new e-invoicing posts found: ${allPosts.length}`);
+  console.log(`Total e-invoicing posts in database: ${visitedUrls.size + allPosts.length}`);
   
-  return uniquePosts;
+  return allPosts;
 }
 

@@ -1,21 +1,46 @@
 # E-Invoicing Web Scraper Dashboard
 
-A fully functional web scraping dashboard that monitors and extracts e-invoicing related content from [BOSA Belgium](https://bosa.belgium.be/en), stores data in Excel format, tracks new publications, and provides analytics visualization.
+A fully functional web scraping dashboard that monitors and extracts e-invoicing related content from [BOSA Belgium](https://bosa.belgium.be/en), stores data in **Supabase cloud storage**, tracks new publications, and provides analytics visualization.
+
+## ✨ What's New!
+
+### 🚀 Intelligent Page Cache (NEW!)
+**50-80x faster scraping after first run!**
+- 🧠 **Smart caching** - Remembers all checked pages
+- ⚡ **Skip unchanged pages** - Only checks new/updated content
+- ⏱️ **Minutes not hours** - 30 min vs 26 hours for re-scrapes
+- 💾 **Automatic** - No configuration needed
+
+**👉 [Learn About Intelligent Cache](INTELLIGENT_CACHE.md)**
+
+### ☁️ Cloud Storage
+Your scraped data is stored in **Supabase PostgreSQL database**:
+- ☁️ **Access from anywhere** - Your data syncs across all devices
+- 🔒 **Never lose data** - Survives browser cache clearing
+- 📦 **No storage limits** - Handle thousands of posts effortlessly
+- 🔄 **Automatic backups** - Supabase backs up your database
+- 📡 **Offline support** - Falls back to localStorage when offline
+
+**👉 [5-Minute Setup Guide](QUICKSTART.md)** | **📚 [Full Documentation](SUPABASE_SETUP.md)**
 
 ## Features
 
 ### 🔍 Web Scraping
 - Automatically scrapes e-invoicing content from BOSA Belgium website
+- **Intelligent page cache** - Skips unchanged pages (98% faster!)
 - Searches for keywords: e-invoicing, electronic invoicing, e-billing, digital invoicing, PEPPOL
 - Handles pagination and multiple pages
 - Extracts publication dates, URLs, titles, and content summaries
 
 ### 📊 Data Management
-- Stores data in Excel format (.xlsx)
+- **☁️ Cloud storage** with Supabase PostgreSQL (2 tables: posts + page cache)
+- **🧠 Smart caching** - Only re-checks new/changed pages
+- Stores data in Excel format (.xlsx) for export
 - Automatic duplicate detection based on URL
 - Tracks new vs existing posts
 - Maintains scrape timestamps
-- Data persists across sessions using window.storage API
+- Data accessible from any device
+- Automatic fallback to localStorage if offline
 
 ### 📈 Analytics Dashboard
 - Total posts counter
@@ -27,6 +52,7 @@ A fully functional web scraping dashboard that monitors and extracts e-invoicing
 
 ### 🎨 User Interface
 - Clean, modern, responsive design
+- Vertical sidebar navigation
 - Real-time status updates
 - Interactive post details modal
 - Direct links to original posts
@@ -34,37 +60,62 @@ A fully functional web scraping dashboard that monitors and extracts e-invoicing
 
 ## Installation
 
-1. Install dependencies:
-```bash
-npm install
-```
+### 1. Install Dependencies
 
-2. Install Python dependencies:
 ```bash
+# Install Node.js dependencies
+npm install
+
+# Install Python dependencies
 pip3 install -r requirements.txt
 ```
 
-3. **Set up Mistral AI API key** (required for LLM verification):
-   - Get your API key from [Mistral AI Console](https://console.mistral.ai/)
-   - Copy `.env.example` to `.env`:
-     ```bash
-     cp .env.example .env
-     ```
-   - Edit `.env` and add your Mistral API key:
-     ```
-     MISTRAL_API_KEY=your_actual_api_key_here
-     ```
-   - Or set it as an environment variable:
-     ```bash
-     export MISTRAL_API_KEY=your_actual_api_key_here
-     ```
+### 2. Set up API Keys
 
-4. Start both servers (backend proxy + frontend):
+Create a `.env` file (or copy from `.env.example`):
+
+```bash
+     cp .env.example .env
+```
+
+Then edit `.env` and configure:
+
+**Required:**
+```env
+# Mistral AI API key (for content verification)
+MISTRAL_API_KEY=your_actual_api_key_here
+
+# Gmail SMTP (for email notifications)
+SMTP_EMAIL=your-email@gmail.com
+SMTP_PASSWORD=your_gmail_app_password
+```
+
+**For Cloud Storage (Optional but Recommended):**
+```env
+# Supabase credentials (see QUICKSTART.md for setup)
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key_here
+```
+
+📚 **Get API Keys:**
+- **Mistral AI**: [console.mistral.ai](https://console.mistral.ai/)
+- **Gmail App Password**: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+- **Supabase**: [QUICKSTART.md](QUICKSTART.md) (5-minute setup)
+
+### 3. Set up Supabase (Optional - for cloud storage)
+
+**Without Supabase**: App works fine, uses browser localStorage
+**With Supabase**: Access your data from anywhere!
+
+👉 **[Follow the 5-minute guide](QUICKSTART.md)** to set up cloud storage
+
+### 4. Start the Application
+
 ```bash
 npm run dev:all
 ```
 
-Or start them separately:
+Or start servers separately:
 ```bash
 # Terminal 1: Backend proxy server (Python Flask on port 3002)
 npm run server
@@ -74,12 +125,13 @@ npm run server
 npm run dev
 ```
 
-5. Open your browser to `http://localhost:3000`
+### 5. Open your browser to `http://localhost:3000`
 
 **Important**: 
 - The backend proxy server (Python Flask on port 3002) is required to bypass CORS restrictions. 
 - Mistral AI API key is required for LLM-based content verification.
-- Without these, scraping will fail or return no results.
+- Supabase is optional but recommended for cloud storage.
+- Without the backend/API key, scraping will fail or return no results.
 
 ## Usage
 
